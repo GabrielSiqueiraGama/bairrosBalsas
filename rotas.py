@@ -5,12 +5,11 @@ import plotly.graph_objs as go
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 
-# Leia os dados do arquivo CSV contendo todos os estados dos EUA e converta-os em um dataframe pandas
+# Leia os dados do arquivo CSV contendo todos os estados do Brasil e converta-os em um dataframe pandas
 states = pd.read_csv("https://raw.githubusercontent.com/GabrielSiqueiraGama/bairrosBalsas/main/enderecos.csv?token=GHSAT0AAAAAACPBPLDDEAI2MKNS7IIA4UXOZQZYYPA")
-
-# Remova os pontos de separação de milhares e converta as colunas Latitude e Longitude para o tipo numérico
-states['Latitude'] = states['Latitude'].str.replace('.', '').astype(float)
-states['Longitude'] = states['Longitude'].str.replace('.', '').astype(float)
+# View content
+states.head()
+states.shape
 print(states)
 # Criando um dataset de veículos
 data = {'Name': ['Vehicle 0', 'Vehicle 1', 'Vehicle 2', 'Vehicle 3', 'Vehicle 4', 'Vehicle 5'],
@@ -135,6 +134,12 @@ def ProcessVRP(data: object, maxTravelDistance: int):
 #The first parameter is our model, the second is the maximum distance that each vehicle will travel
 vrp = ProcessVRP(data,10000)
 # Convert the result to structured data
+def GetArcCostForVehicle(from_index, to_index, vehicle_id, data):
+    from_node = data['manager'].IndexToNode(from_index)
+    to_node = data['manager'].IndexToNode(to_index)
+    return data['distance_matrix'][from_node][to_node]
+
+
 
 def MapResult(agents, places, vrp):
     routing = vrp["routing"]
@@ -171,8 +176,11 @@ def MapResult(agents, places, vrp):
 
                 # Add it to waypoints
                 waypoints.append(waypoint)     
-        
-            route_distance += routing.GetArcCostForVehicle(previous_index, index, vehicle_id)
+
+            # Altere o trecho do código onde você registra o callback de distância para utilizar a nova função GetArcCostForVehicle
+
+        transit_callback_index = routing.RegisterTransitCallback(GetArcCostForVehicle)
+        route_distance += routing.GetArcCostForVehicle(previous_index, index, vehicle_id)
               
             
         plan_output += '{}\n'.format(manager.IndexToNode(index))
@@ -216,6 +224,7 @@ def CreateRouteDataframe(vehicle_id, agents, waypoints, route_distance):
 
 # Convert miles to KM
 def ConvertToKm(miles):
+    print("miles", miles)
     return miles * 1.6
 
 
@@ -254,28 +263,30 @@ def ShowGraph(response):
         ))
 
     fig.update_layout(
-            autosize=True,
+            width=800,  # Defina a largura desejada em pixels
+            height=800,  # Defina a altura desejada em pixels
             hovermode='closest',
             mapbox=dict(
                 accesstoken=mapbox_token,
-                bearing=0,
+                bearing=1,
                 center=dict(
-                    lat=38,
-                    lon=-94
+                    lat=-7.5,
+                    lon=-46.05
                 ),
                 pitch=0,
-                zoom=3,
+                zoom=11,
                 style='dark'
             ),
              title=dict(
                 text="Rotas",
                 font=dict(
-                    size=20
+                    size=40
                 )
             ),
         )
 
     fig.show()
+
+
 # And here's the magic
 ShowGraph(response)
-
