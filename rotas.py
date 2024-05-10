@@ -1,292 +1,122 @@
 import pandas as pd
-import numpy as np
-from sklearn.metrics import DistanceMetric
+from sklearn.metrics.pairwise import haversine_distances
+from math import radians
 import plotly.graph_objs as go
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 
-# Leia os dados do arquivo CSV contendo todos os estados do Brasil e converta-os em um dataframe pandas
+# Função para calcular a distância haversine entre dois pontos
+def calcular_distancia(coord1, coord2):
+    # Convertendo coordenadas de graus para radianos
+    coord1_rad = [radians(_) for _ in coord1]
+    coord2_rad = [radians(_) for _ in coord2]
+
+    # Calculando a distância haversine
+    dist = haversine_distances([coord1_rad, coord2_rad])
+    distancia_km = dist[0][1] * 6371  # Multiplicando pelo raio da Terra em km
+    return distancia_km
+
+# Carregando os dados dos estados
 states = pd.read_csv("https://raw.githubusercontent.com/GabrielSiqueiraGama/bairrosBalsas/main/enderecos.csv?token=GHSAT0AAAAAACPBPLDDEAI2MKNS7IIA4UXOZQZYYPA")
-# View content
-states.head()
-states.shape
-print(states)
-# Criando um dataset de veículos
-data = {'Name': ['Vehicle 0', 'Vehicle 1', 'Vehicle 2', 'Vehicle 3', 'Vehicle 4', 'Vehicle 5'],
-        'Plate': ['MIY208', 'UH1BCD', '7GDE215', '6543MS', '8DFG468', 'D48541T']
-        }
 
-# Criando um dataframe
-vehicles = pd.DataFrame(data, columns=['Name', 'Plate'])
+# Selecionando as coordenadas do ponto de partida (exemplo)
+coordenadas_partida = (states.loc[0, 'Latitude'], states.loc[0, 'Longitude'])
 
-# Utiliza uma amostra dos dados de estado como localização dos nossos veículos
-sample = states.sample(n=6, random_state=1)
+# Calculando a distância entre o ponto de partida e todos os outros pontos
+distancias = []
+for i in range(len(states)):
+    coordenadas_destino = (states.loc[i, 'Latitude'], states.loc[i, 'Longitude'])
+    distancia = calcular_distancia(coordenadas_partida, coordenadas_destino)
+    distancias.append(distancia)
 
-# Remove a amostra dos dados de estado
-states.drop(sample.index, inplace=True)
-
-# Junte ambos
-vehicles = vehicles.join(sample.reset_index(drop=True))
-
-# Função para pré-processamento do VRP
-# Função para pré-processamento do VRP
-def PreProcessVRP(vehicles, places):
-    # Mapeia todas as coordenadas de lugares
-    visits = places[['Latitude','Longitude']].astype(float)
-
-    # Mapeia todos os pontos de partida
-    starts = vehicles[['Latitude','Longitude']].astype(float)
-
-    # Mapeia todos os depósitos de agentes
-    depots = vehicles[['Latitude','Longitude']].astype(float)
-
-    # Concatena todas as coordenadas
-    data = pd.concat([starts, depots, visits]).reset_index(drop=True)
-
-    # Normaliza as coordenadas
-    sources = data.apply(np.deg2rad)
-
-    return {"starts": starts, "depots": depots, "places": visits, "coordinates": sources}
-
-# Pre Processamento
-dataset = PreProcessVRP(vehicles, states)
-
-# Imprimir as coordenadas normalizadas
-print("Coordenadas normalizadas:")
-print(dataset['coordinates'])
-# Método para criar nosso modelo de processamento
-def BuildModel(matrix, dataset, vehicles: int):
-    
-    start_indexes = (list(map(int,dataset.get("starts").index.values)))
-
-    depot_indexes = [index + len(start_indexes) for index, element in enumerate(dataset.get("depots").index.values)]
-
-    return dict(distance_matrix=matrix, num_vehicles=vehicles, starts=start_indexes, ends=depot_indexes)
-
-# Método para criar uma matriz de distância
-def CreateDistanceMatrix(distances):
-    dist = DistanceMetric.get_metric('haversine')
-    return dist.pairwise(distances) * 6373
-
-
+# Adicionando a coluna de distância ao DataFrame
+states['Distancia'] = distancias
 
 # Criação da matriz de distância
-distance_matrix = CreateDistanceMatrix(dataset['coordinates'])
+distance_matrix = []
+for i in range(len(states)):
+    dist_row = []
+    for j in range(len(states)):
+        coordenadas_i = (states.loc[i, 'Latitude'], states.loc[i, 'Longitude'])
+        coordenadas_j = (states.loc[j, 'Latitude'], states.loc[j, 'Longitude'])
+        distancia_ij = calcular_distancia(coordenadas_i, coordenadas_j)
+        dist_row.append(distancia_ij)
+    distance_matrix.append(dist_row)
 
-# Construção do modelo
-model = BuildModel(distance_matrix, dataset, len(vehicles))
-# Create the distance matrix
-distance_matrix = CreateDistanceMatrix(dataset.get("coordinates").values)
- 
-# Build problem data
-data = BuildModel(distance_matrix, dataset, len(vehicles))
+# Função para resolver o VRP
+def resolver_vrp(distance_matrix):
+    # Cria o gerenciador de índices
+    manager = pywrapcp.RoutingIndexManager(len(distance_matrix), 1, [0], [0])
 
-# Method that will calculate the result of clustering the routes for each of the vehicles
-
-def ProcessVRP(data: object, maxTravelDistance: int): 
-    # Create the routing index manager.
-    manager = pywrapcp.RoutingIndexManager(
-        len(data['distance_matrix']),
-        data['num_vehicles'],
-        data['starts'],
-        data['ends'])  
-    
-    # Create Routing Model.
+    # Cria o modelo de roteamento
     routing = pywrapcp.RoutingModel(manager)
 
-    # Create and register a transit callback.
+    # Define a função de custo
     def distance_callback(from_index, to_index):
-        print()
-        """Returns the distance between the two nodes."""
-        # Convert from routing variable Index to distance matrix NodeIndex.
         from_node = manager.IndexToNode(from_index)
         to_node = manager.IndexToNode(to_index)
-        return data['distance_matrix'][from_node][to_node]
+        return distance_matrix[from_node][to_node]
 
     transit_callback_index = routing.RegisterTransitCallback(distance_callback)
 
-    # Define cost of each arc.
+    # Define a função de custo
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-    # Add Distance constraint.
-    dimension_name = 'Distance'
-    routing.AddDimension(transit_callback_index, 0, maxTravelDistance, True, dimension_name)
-
-    distance_dimension = routing.GetDimensionOrDie(dimension_name)
-    distance_dimension.SetGlobalSpanCostCoefficient(100)
-
-    # Setting first solution heuristic.
+    # Define o parâmetro de pesquisa
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-    search_parameters.local_search_metaheuristic = (
-    routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
-    
-    # Time to solv the problem
-    search_parameters.time_limit.seconds = 120
-    
-    # Active logs
-    search_parameters.log_search = True
+    search_parameters.first_solution_strategy = (routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
 
-    # Solve the problem.
+    # Resolve o problema VRP
     solution = routing.SolveWithParameters(search_parameters)
 
-    return dict(data=data, manager=manager, routing=routing, solution=solution)
-
-#The first parameter is our model, the second is the maximum distance that each vehicle will travel
-vrp = ProcessVRP(data,10000)
-# Convert the result to structured data
-def GetArcCostForVehicle(from_index, to_index, vehicle_id, data):
-    from_node = data['manager'].IndexToNode(from_index)
-    to_node = data['manager'].IndexToNode(to_index)
-    return data['distance_matrix'][from_node][to_node]
-
-
-
-def MapResult(agents, places, vrp):
-    routing = vrp["routing"]
-    solution = vrp["solution"]
-    manager = vrp["manager"]
-    vehicles = len(agents)
-
-    itineraries = []
-
-    max_route_distance = 0
-    for vehicle_id in range(vehicles):
-
-        # Default route distance
-        route_distance: int = 0
-        # Start current vehicle
-        index = routing.Start(vehicle_id)
-
-        waypoints = []
-
-        plan_output = 'Route for vehicle {}:\n'.format(vehicle_id)
+    # Retorna a rota encontrada
+    rota = []
+    if solution:
+        index = routing.Start(0)
         while not routing.IsEnd(index):
-            plan_output += ' {} -> '.format(manager.IndexToNode(index))          
-            
-            previous_index = index
-    
+            rota.append(manager.IndexToNode(index))
             index = solution.Value(routing.NextVar(index))
-        
-            if routing.IsEnd(index) == False and routing.IsStart(index) == False:
-                
-                p_index = index - (len(vrp["data"]["starts"]) + len(vrp["data"]["ends"]))
+    return rota
 
-                # Create a new itinerary place object
-                waypoint = places.iloc[p_index]
+# Resolve o VRP
+rota_vrp = resolver_vrp(distance_matrix)
 
-                # Add it to waypoints
-                waypoints.append(waypoint)     
+# Atualiza o DataFrame com a ordem da rota encontrada
+states = states.iloc[rota_vrp]
 
-            # Altere o trecho do código onde você registra o callback de distância para utilizar a nova função GetArcCostForVehicle
-
-        transit_callback_index = routing.RegisterTransitCallback(GetArcCostForVehicle)
-        route_distance += routing.GetArcCostForVehicle(previous_index, index, vehicle_id)
-              
-            
-        plan_output += '{}\n'.format(manager.IndexToNode(index))
-        plan_output += 'Distance of the route: {}km\n'.format(route_distance)
-        print(plan_output)
-
-        max_route_distance = max(route_distance, max_route_distance)
-
-        # Create a dataframe for the current vehicle
-        item = CreateRouteDataframe(vehicle_id,agents,waypoints,route_distance)
-        
-        # Add new itinerary
-        itineraries.append(item)
-
-    print('Maximum of the route distances: {}km'.format(max_route_distance))
-    
-    return itineraries
-
-def CreateRouteDataframe(vehicle_id, agents, waypoints, route_distance):
-
-    vehicle = agents.iloc[vehicle_id]
-
-    # Criar um dataframe
-    item = pd.DataFrame(waypoints, columns=['Latitude', 'Longitude', 'City', 'State'])
-
-    # Adicionar o ponto de partida
-    item.loc[-1] = [vehicle["Latitude"], vehicle["Longitude"], vehicle["City"], vehicle["State"]]  
-    item.index = item.index + 1
-    item.sort_index(inplace=True)
-
-    # Adicionar o ponto final
-    item = pd.concat([item, item.head(1)], ignore_index=True, axis=0)
-
-    # Atualizar outros valores
-    item["VehicleId"] = vehicle_id
-    item["Plate"] = vehicle["Plate"]
-    item["Distance"] = ConvertToKm(route_distance)
-
-    return item
-
-
-# Convert miles to KM
-def ConvertToKm(miles):
-    print("miles", miles)
-    return miles * 1.6
-
-
-# If the solution to the problem was found show the results
-if vrp["solution"] is None:
-    print("No solution found.")
-else:
-    response = MapResult(vehicles,states,vrp)
-    
-# Concatenate the dataframe of all vehicles to get the complete route
-routes = pd.concat(response,ignore_index=True)
-
-# Here's the vehicle routing problem solved :), now let's get to the fun part, showing it on the map!
-routes    
-
-# Put your mapbox token here
+# Mapa
 mapbox_token = "pk.eyJ1IjoiemhhbnR0IiwiYSI6ImNsdjFqbXFiMzA1aXcybmxkcHd1Ym5zajYifQ.Hcys5Sf519pfI_BauT5iVA"
 
-# Method to plot our vehicle routing problem solved on the map
-def ShowGraph(response):
-    
-    fig = go.Figure(go.Scattermapbox())
-    
-    fig.data = []
+# Plotagem do mapa
+trace1 = go.Scattermapbox(
+    lat=states['Latitude'],
+    lon=states['Longitude'],
+    mode='markers+lines',
+    marker=dict(
+        size=9,
+        color=['blue' if i == 0 else 'red' for i in range(len(states))],  # Azul para o ponto de partida, vermelho para os outros pontos
+        opacity=0.7
+    ),
+    text=states['City'] + ', ' + states['State'] + '<br>' + 'Distância até o ponto de partida: ' + states['Distancia'].round(2).astype(str) + ' km'
+)
 
-    for route in response:
-        fig.add_trace(go.Scattermapbox(
-            lat=route["Latitude"],
-            lon=route["Longitude"],
-            mode='markers+text+lines',
-            marker=go.scattermapbox.Marker(
-                size=20
-            ),
-            text=route.index.tolist(),
-            name=route["Plate"].iloc[0]
-        ))
-
-    fig.update_layout(
-            width=800,  # Defina a largura desejada em pixels
-            height=800,  # Defina a altura desejada em pixels
-            hovermode='closest',
-            mapbox=dict(
-                accesstoken=mapbox_token,
-                bearing=1,
-                center=dict(
-                    lat=-7.5,
-                    lon=-46.05
-                ),
-                pitch=0,
-                zoom=11,
-                style='dark'
-            ),
-             title=dict(
-                text="Rotas",
-                font=dict(
-                    size=40
-                )
-            ),
-        )
-
-    fig.show()
-
-
-# And here's the magic
-ShowGraph(response)
+layout = go.Layout(
+    title='Rota Ótima do Veículo',
+    width=800,  # Defina a largura desejada em pixels
+    height=800,  # Defina a altura desejada em pixels
+    hovermode='closest',
+    showlegend=False,
+    mapbox=dict(
+        accesstoken=mapbox_token,
+        bearing=0,
+        center=dict(
+            lat=-7.5242,
+            lon=-46.0322
+        ),
+        pitch=0,
+        zoom=11,
+        style='dark'
+    ),
+)
+fig = go.Figure(data=[trace1], layout=layout)
+fig.show()
