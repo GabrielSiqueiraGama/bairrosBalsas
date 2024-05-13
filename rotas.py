@@ -1,107 +1,83 @@
 import pandas as pd
-from sklearn.metrics.pairwise import haversine_distances
-from math import radians
+from math import radians, sin, cos, sqrt, atan2
 import plotly.graph_objs as go
-from ortools.constraint_solver import routing_enums_pb2
-from ortools.constraint_solver import pywrapcp
 
-# Função para calcular a distância haversine entre dois pontos
+# Função para calcular a distância entre dois pontos usando a fórmula de Haversine
 def calcular_distancia(coord1, coord2):
-    # Convertendo coordenadas de graus para radianos
-    coord1_rad = [radians(_) for _ in coord1]
-    coord2_rad = [radians(_) for _ in coord2]
-
-    # Calculando a distância haversine
-    dist = haversine_distances([coord1_rad, coord2_rad])
-    distancia_km = dist[0][1] * 6371  # Multiplicando pelo raio da Terra em km
-    return distancia_km
+    lat1, lon1 = coord1
+    lat2, lon2 = coord2
+    R = 6371.0  # raio da Terra em km
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    distance = R * c
+    return distance
 
 # Carregando os dados dos estados
 states = pd.read_csv("https://raw.githubusercontent.com/GabrielSiqueiraGama/bairrosBalsas/main/enderecos.csv?token=GHSAT0AAAAAACPBPLDDEAI2MKNS7IIA4UXOZQZYYPA")
 
-# Selecionando as coordenadas do ponto de partida (exemplo)
-coordenadas_partida = (states.loc[0, 'Latitude'], states.loc[0, 'Longitude'])
+# Solicitar ao usuário o índice do ponto de entrada
+partida_index = int(input("Digite o índice do ponto de entrada: "))
+print(f"Índice do ponto de entrada: {partida_index}")
 
-# Calculando a distância entre o ponto de partida e todos os outros pontos
-distancias = []
-for i in range(len(states)):
-    coordenadas_destino = (states.loc[i, 'Latitude'], states.loc[i, 'Longitude'])
-    distancia = calcular_distancia(coordenadas_partida, coordenadas_destino)
-    distancias.append(distancia)
+# Solicitar ao usuário o índice do ponto de saída
+destino_index = int(input("Digite o índice do ponto de saída: "))
+print(f"Índice do ponto de saída: {destino_index}")
 
-# Adicionando a coluna de distância ao DataFrame
-states['Distancia'] = distancias
+# Lista de nós intermediários que a rota deve passar
+nos_intermediarios = [9]  # Exemplo de nós intermediários
+print("Nós intermediários: ", nos_intermediarios)
 
-# Criação da matriz de distância
-distance_matrix = []
-for i in range(len(states)):
-    dist_row = []
-    for j in range(len(states)):
-        coordenadas_i = (states.loc[i, 'Latitude'], states.loc[i, 'Longitude'])
-        coordenadas_j = (states.loc[j, 'Latitude'], states.loc[j, 'Longitude'])
-        distancia_ij = calcular_distancia(coordenadas_i, coordenadas_j)
-        dist_row.append(distancia_ij)
-    distance_matrix.append(dist_row)
+# Inicializando a rota ótima
+optimal_path = [partida_index]
 
-# Função para resolver o VRP
-def resolver_vrp(distance_matrix):
-    # Cria o gerenciador de índices
-    manager = pywrapcp.RoutingIndexManager(len(distance_matrix), 1, [0], [0])
+# Calculando a distância total percorrida
+total_distance = 0
 
-    # Cria o modelo de roteamento
-    routing = pywrapcp.RoutingModel(manager)
+# Adicionando os nós intermediários à rota ótima
+for node in nos_intermediarios:
+    distance = calcular_distancia((states.loc[optimal_path[-1], 'Latitude'], states.loc[optimal_path[-1], 'Longitude']),
+                                  (states.loc[node, 'Latitude'], states.loc[node, 'Longitude']))
+    total_distance += distance
+    optimal_path.append(node)
 
-    # Define a função de custo
-    def distance_callback(from_index, to_index):
-        from_node = manager.IndexToNode(from_index)
-        to_node = manager.IndexToNode(to_index)
-        return distance_matrix[from_node][to_node]
+# Adicionando o ponto de saída à rota ótima
+distance = calcular_distancia((states.loc[optimal_path[-1], 'Latitude'], states.loc[optimal_path[-1], 'Longitude']),
+                              (states.loc[destino_index, 'Latitude'], states.loc[destino_index, 'Longitude']))
+total_distance += distance
+optimal_path.append(destino_index)
 
-    transit_callback_index = routing.RegisterTransitCallback(distance_callback)
+print("Distância total percorrida:", total_distance, "km")
 
-    # Define a função de custo
-    routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
-
-    # Define o parâmetro de pesquisa
-    search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-    search_parameters.first_solution_strategy = (routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
-
-    # Resolve o problema VRP
-    solution = routing.SolveWithParameters(search_parameters)
-
-    # Retorna a rota encontrada
-    rota = []
-    if solution:
-        index = routing.Start(0)
-        while not routing.IsEnd(index):
-            rota.append(manager.IndexToNode(index))
-            index = solution.Value(routing.NextVar(index))
-    return rota
-
-# Resolve o VRP
-rota_vrp = resolver_vrp(distance_matrix)
-
-# Atualiza o DataFrame com a ordem da rota encontrada
-states = states.iloc[rota_vrp]
-
-# Mapa
+# Plotagem do mapa com a rota ótima
 mapbox_token = "pk.eyJ1IjoiemhhbnR0IiwiYSI6ImNsdjFqbXFiMzA1aXcybmxkcHd1Ym5zajYifQ.Hcys5Sf519pfI_BauT5iVA"
 
-# Plotagem do mapa
 trace1 = go.Scattermapbox(
     lat=states['Latitude'],
     lon=states['Longitude'],
     mode='markers+lines',
     marker=dict(
         size=9,
-        color=['blue' if i == 0 else 'red' for i in range(len(states))],  # Azul para o ponto de partida, vermelho para os outros pontos
+        color='blue',  # Azul para o ponto de entrada
         opacity=0.7
     ),
-    text=states['City'] + ', ' + states['State'] + '<br>' + 'Distância até o ponto de partida: ' + states['Distancia'].round(2).astype(str) + ' km'
+    text=states['City'] + ', ' + states['State']
+)
+
+trace2 = go.Scattermapbox(
+    lat=[states.loc[i, 'Latitude'] for i in optimal_path],
+    lon=[states.loc[i, 'Longitude'] for i in optimal_path],
+    mode='lines',
+    line=dict(
+        color='red',  # Vermelho para a rota ótima
+        width=2
+    ),
+    text=[f"{states.loc[i, 'City']}, {states.loc[i, 'State']}" for i in optimal_path]
 )
 
 layout = go.Layout(
-    title='Rota Ótima do Veículo',
+    title='Rota Ótima do Ponto de Entrada para o Destino',
     width=800,  # Defina a largura desejada em pixels
     height=800,  # Defina a altura desejada em pixels
     hovermode='closest',
@@ -118,5 +94,11 @@ layout = go.Layout(
         style='dark'
     ),
 )
-fig = go.Figure(data=[trace1], layout=layout)
+
+# Criando a figura do mapa
+fig = go.Figure(data=[trace1, trace2], layout=layout)
+
+# Exibindo o mapa
+print("Exibindo o mapa...")
 fig.show()
+print("Mapa exibido com sucesso.")
