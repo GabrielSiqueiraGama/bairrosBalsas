@@ -1,3 +1,4 @@
+import streamlit as st
 import pandas as pd
 from math import radians, sin, cos, sqrt, atan2
 import plotly.graph_objs as go
@@ -97,79 +98,80 @@ def encontrar_melhor_caminho(partida_index, destino_index, intermediarios, state
     
     return melhor_caminho
 
+# Streamlit interface
+st.title("Roteamento Ótimo com Streamlit")
+
 # Carregar os dados dos estados
 states = pd.read_csv("https://raw.githubusercontent.com/GabrielSiqueiraGama/bairrosBalsas/main/estados_com_vizinhos.csv")
 
-# Solicitar ao usuário o índice do ponto de entrada
-partida_index = int(input("Digite o índice do ponto de entrada: "))
-print(f"Índice do ponto de entrada: {partida_index}")
+# Exibir a lista de bairros com seus números em uma única linha
+bairros_lista = ", ".join([f"{i}: {row['City']}" for i, row in states.iterrows()])
+st.write("Lista de bairros com seus índices:")
+st.text(bairros_lista)
 
-# Solicitar ao usuário o índice do ponto de saída
-destino_index = int(input("Digite o índice do ponto de saída: "))
-print(f"Índice do ponto de saída: {destino_index}")
+# Entrada do usuário
+partida_index = st.number_input("Digite o índice do ponto de entrada", min_value=0, max_value=len(states)-1, step=1)
+destino_index = st.number_input("Digite o índice do ponto de saída", min_value=0, max_value=len(states)-1, step=1)
+intermediarios_input = st.text_input("Digite os índices dos pontos intermediários separados por vírgula (ou deixe em branco se não houver)")
 
-# Solicitar ao usuário os índices dos pontos intermediários (separados por vírgula)
-intermediarios_input = input("Digite os índices dos pontos intermediários separados por vírgula (ou deixe em branco se não houver): ")
 intermediarios = [int(x) for x in intermediarios_input.split(',')] if intermediarios_input else []
-print(f"Índices dos pontos intermediários: {intermediarios}")
 
 # Encontrar o melhor caminho usando permutações dos pontos intermediários
-melhor_caminho = encontrar_melhor_caminho(partida_index, destino_index, intermediarios, states)
+if st.button("Encontrar Melhor Caminho"):
+    melhor_caminho = encontrar_melhor_caminho(partida_index, destino_index, intermediarios, states)
 
-if melhor_caminho:
-    print("Melhor rota encontrada:", melhor_caminho)
-else:
-    print("Não foi possível encontrar uma rota.")
+    if melhor_caminho:
+        st.write("Melhor rota encontrada:", melhor_caminho)
+    else:
+        st.write("Não foi possível encontrar uma rota.")
 
-# Plotagem do mapa com a melhor rota
-mapbox_token = "pk.eyJ1IjoiemhhbnR0IiwiYSI6ImNsdjFqbXFiMzA1aXcybmxkcHd1Ym5zajYifQ.Hcys5Sf519pfI_BauT5iVA"
+    # Plotagem do mapa com a melhor rota
+    mapbox_token = "pk.eyJ1IjoiemhhbnR0IiwiYSI6ImNsdjFqbXFiMzA1aXcybmxkcHd1Ym5zajYifQ.Hcys5Sf519pfI_BauT5iVA"
 
-trace1 = go.Scattermapbox(
-    lat=states['Latitude'],
-    lon=states['Longitude'],
-    mode='markers+lines',
-    marker=dict(
-        size=9,
-        color='blue',  # Azul para o ponto de entrada
-        opacity=0.7
-    ),
-    text=states['City'] + ', ' + states['State']
-)
-
-trace2 = go.Scattermapbox(
-    lat=[states.loc[i, 'Latitude'] for i in melhor_caminho],
-    lon=[states.loc[i, 'Longitude'] for i in melhor_caminho],
-    mode='lines',
-    line=dict(
-        color='red',  # Vermelho para a melhor rota
-        width=2
-    ),
-    text=[f"{states.loc[i, 'City']}, {states.loc[i, 'State']}" for i in melhor_caminho]
-)
-
-layout = go.Layout(
-    title='Melhor Rota do Ponto de Entrada para o Destino',
-    width=800,  # Defina a largura desejada em pixels
-    height=800,  # Defina a altura desejada em pixels
-    hovermode='closest',
-    showlegend=False,
-    mapbox=dict(
-        accesstoken=mapbox_token,
-        bearing=0,
-        center=dict(
-            lat=-7.5242,
-            lon=-46.0322
+    trace1 = go.Scattermapbox(
+        lat=states['Latitude'],
+        lon=states['Longitude'],
+        mode='markers+lines',
+        marker=dict(
+            size=9,
+            color='blue',  # Azul para o ponto de entrada
+            opacity=0.7
         ),
-        pitch=0,
-        zoom=11,
-        style='dark'
-    ),
-)
+        text=states['City'] + ', ' + states['State']
+    )
 
-# Criando a figura do mapa
-fig = go.Figure(data=[trace1, trace2], layout=layout)
+    trace2 = go.Scattermapbox(
+        lat=[states.loc[i, 'Latitude'] for i in melhor_caminho],
+        lon=[states.loc[i, 'Longitude'] for i in melhor_caminho],
+        mode='lines',
+        line=dict(
+            color='red',  # Vermelho para a melhor rota
+            width=2
+        ),
+        text=[f"{states.loc[i, 'City']}, {states.loc[i, 'State']}" for i in melhor_caminho]
+    )
 
-# Exibindo o mapa
-print("Exibindo o mapa...")
-fig.show()
-print("Mapa exibido com sucesso.")
+    layout = go.Layout(
+        title='Melhor Rota do Ponto de Entrada para o Destino',
+        width=800,  # Defina a largura desejada em pixels
+        height=800,  # Defina a altura desejada em pixels
+        hovermode='closest',
+        showlegend=False,
+        mapbox=dict(
+            accesstoken=mapbox_token,
+            bearing=0,
+            center=dict(
+                lat=-7.5242,
+                lon=-46.0322
+            ),
+            pitch=0,
+            zoom=11,
+            style='dark'
+        ),
+    )
+
+    # Criando a figura do mapa
+    fig = go.Figure(data=[trace1, trace2], layout=layout)
+
+    # Exibindo o mapa
+    st.plotly_chart(fig)
